@@ -72,6 +72,27 @@
     }
   }
 
+  /* Keep common abdominal cramping available in the full symptom list.
+     Existing Daily Check-in save/restore and severity handlers operate on
+     input[name="symptom"], so this uses the same built-in symptom contract. */
+  function installBellyCrampsSymptom() {
+    const grid = document.getElementById("symptomChoiceGrid");
+    if (!grid || grid.querySelector('input[name="symptom"][value="Belly Cramps"]')) return;
+
+    const label = document.createElement("label");
+    label.dataset.tsukiBuiltInSymptom = "belly-cramps";
+    label.innerHTML = '<input type="checkbox" name="symptom" value="Belly Cramps"><span>🌙 Belly cramps</span>';
+
+    const backPainLabel = grid.querySelector('input[name="symptom"][value="Back Pain"]')?.closest("label");
+    if (backPainLabel) backPainLabel.insertAdjacentElement("afterend", label);
+    else grid.appendChild(label);
+
+    const key = document.getElementById("logDate")?.value || "";
+    const saved = key && typeof data === "object" ? data?.logs?.[key]?.symptoms : null;
+    const input = label.querySelector('input[name="symptom"]');
+    if (input) input.checked = Array.isArray(saved) && saved.includes("Belly Cramps");
+  }
+
   /* Period boundaries should follow what the user actually logs.
      This runs on document capture so it happens before the form-level
      phase/save handlers in app.js and body-signals.js. */
@@ -156,6 +177,7 @@
      These are also cached by the service worker for offline launches. */
   ensureStylesheet("./ui-polish.css", "ui-polish");
   ensureStylesheet("./period-modal-scroll-fix.css", "period-modal-scroll-fix");
+  installBellyCrampsSymptom();
   installAdaptivePeriodBoundaries();
 
   /* The Today milestone is intentionally first. It corrects the generic
