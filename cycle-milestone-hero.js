@@ -1,13 +1,14 @@
 /* ============================================================
    TSUKI 🌙 — REGULAR-CYCLE MILESTONE HERO
    Rotates the Today prediction card through the next useful milestone for
-   regular cycles only. Calendar ovulation timing remains an estimate.
+   regular cycles only, and keeps Calendar prediction visuals aligned with
+   the same central forecast used by Day Details. Calendar ovulation timing remains an estimate.
    ============================================================ */
 (() => {
   "use strict";
   if (window.TsukiCycleMilestoneHero?.installed) return;
 
-  const VERSION = "1.0.0-pre-cycle-milestones-3";
+  const VERSION = "1.0.0-pre-cycle-milestones-4";
   const $ = selector => document.querySelector(selector);
 
   function cyclePattern() {
@@ -211,6 +212,165 @@
     applyBadge(milestone.badge);
   }
 
+
+  function calendarProjectionState(key) {
+    const date = safeDate(key);
+    let actualPeriod = null;
+    let anchor = null;
+    let phase = "";
+    let cycleDay = null;
+    let inStartWindow = false;
+    let projectedCycle = false;
+
+    try { actualPeriod = typeof periodForDate === "function" ? periodForDate(key) : null; }
+    catch (_) {}
+    try { anchor = typeof latestPeriod === "function" ? latestPeriod() : null; }
+    catch (_) {}
+
+    if (!date) {
+      return { date, actualPeriod, phase, cycleDay, inStartWindow, projectedCycle };
+    }
+
+    const anchorDate = safeDate(anchor?.start);
+    const usesProjectedCalendar = Boolean(anchorDate && date >= anchorDate);
+
+    try {
+      phase = usesProjectedCalendar && typeof projectedPhaseForDate === "function"
+        ? projectedPhaseForDate(key)
+        : typeof phaseForDate === "function"
+          ? phaseForDate(key)
+          : "";
+    }
+    catch (_) {}
+
+    try {
+      cycleDay = usesProjectedCalendar && typeof projectedCycleDayForDate === "function"
+        ? projectedCycleDayForDate(key)
+        : typeof cycleDayForDate === "function"
+          ? cycleDayForDate(key)
+          : null;
+    }
+    catch (_) {}
+
+    try {
+      const windows = typeof calendarPredictionWindows === "function"
+        ? calendarPredictionWindows(12)
+        : [];
+      inStartWindow = typeof dateInAnyPredictionWindow === "function"
+        ? dateInAnyPredictionWindow(date, windows)
+        : false;
+    }
+    catch (_) {}
+
+    try {
+      const projectedStart = usesProjectedCalendar && typeof projectedCycleStartForDate === "function"
+        ? projectedCycleStartForDate(key)
+        : null;
+      const projectedStartKey = projectedStart && typeof dateKey === "function"
+        ? dateKey(projectedStart)
+        : "";
+      projectedCycle = Boolean(projectedStartKey && anchor?.start && projectedStartKey !== anchor.start);
+    }
+    catch (_) {}
+
+    return { date, actualPeriod, phase, cycleDay, inStartWindow, projectedCycle };
+  }
+
+  function ensureCalendarPredictionStyles() {
+    if (document.getElementById("tsuki-calendar-prediction-clarity")) return;
+
+    const style = document.createElement("style");
+    style.id = "tsuki-calendar-prediction-clarity";
+    style.textContent = `
+      .calendar-day.predicted-period:not(.period-range) {
+        background: var(--pink-200) !important;
+        color: var(--pink-600) !important;
+        font-weight: 800;
+      }
+
+      .calendar-day.prediction-start-window:not(.period-range) {
+        box-shadow: inset 0 0 0 1.5px rgba(217, 87, 136, .42);
+      }
+
+      .legend-dot.predicted-period {
+        background: var(--pink-200);
+        border: 1px solid rgba(217, 87, 136, .22);
+      }
+
+      .legend-dot.prediction-start-window {
+        background: transparent;
+        border: 1.5px solid var(--pink-400);
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function syncCalendarPredictionLegend() {
+    const legend = $(".calendar-legend");
+    if (!legend) return;
+
+    let predictedItem = legend.querySelector('[data-calendar-legend="predicted-period"]');
+    if (!predictedItem) {
+      predictedItem = legend.querySelector(".legend-dot.predicted")?.closest("span") || null;
+      if (predictedItem) predictedItem.dataset.calendarLegend = "predicted-period";
+    }
+
+    if (predictedItem) {
+      predictedItem.innerHTML = '<i class="legend-dot predicted-period"></i>Predicted period';
+    }
+
+    let startWindowItem = legend.querySelector('[data-calendar-legend="prediction-start-window"]');
+    if (!startWindowItem) {
+      startWindowItem = document.createElement("span");
+      startWindowItem.dataset.calendarLegend = "prediction-start-window";
+      startWindowItem.innerHTML = '<i class="legend-dot prediction-start-window"></i>Possible start';
+      if (predictedItem) predictedItem.insertAdjacentElement("afterend", startWindowItem);
+      else legend.prepend(startWindowItem);
+    }
+
+    const note = document.querySelector('[data-screen="calendar"] .soft-note');
+    if (note) {
+      note.textContent =
+        "Filled pink dates show Tsuki’s central predicted period days. Pink outlined dates show the possible Day 1 start window. Predictions use your Typical Cycle Length from your latest logged period, and shift when you log the next actual start.";
+    }
+  }
+
+  function applyCalendarPredictionClarity() {
+    ensureCalendarPredictionStyles();
+    syncCalendarPredictionLegend();
+
+    document.querySelectorAll("#calendarGrid .calendar-day[data-date]").forEach(button => {
+      const state = calendarProjectionState(button.dataset.date || "");
+
+      /* app.js historically used .predicted for the ± start-date uncertainty
+         window, which made that window look like the predicted period itself.
+         Remove that ambiguous fill, then render the two concepts separately. */
+      button.classList.remove("predicted", "predicted-period", "prediction-start-window");
+
+      if (state.actualPeriod) return;
+      if (state.phase === "Predicted period") button.classList.add("predicted-period");
+      if (state.inStartWindow) button.classList.add("prediction-start-window");
+    });
+  }
+
+  function decorateDayDetailPrediction(key) {
+    const content = $("#dayDetailContent");
+    if (!content) return;
+
+    const state = calendarProjectionState(key);
+    const summarySmall = content.querySelector(".day-detail-summary small");
+
+    if (summarySmall && state.cycleDay) {
+      summarySmall.textContent = `${state.projectedCycle ? "Projected " : ""}Cycle Day ${state.cycleDay}`;
+    }
+
+    content.querySelectorAll(".day-detail-chips span").forEach(chip => {
+      if (chip.textContent.includes("Estimated period window")) {
+        chip.textContent = "🌸 Possible period start window";
+      }
+    });
+  }
+
   function wrap() {
     if (typeof renderToday === "function" && !renderToday.__cycleMilestoneWrapped) {
       const base = renderToday;
@@ -224,6 +384,30 @@
       wrapped.__cycleMilestoneWrapped = true;
       renderToday = wrapped;
       window.renderToday = wrapped;
+    }
+
+    if (typeof renderCalendar === "function" && !renderCalendar.__calendarPredictionClarityWrapped) {
+      const base = renderCalendar;
+      const wrapped = function(...args) {
+        const result = base.apply(this, args);
+        applyCalendarPredictionClarity();
+        return result;
+      };
+      wrapped.__calendarPredictionClarityWrapped = true;
+      renderCalendar = wrapped;
+      window.renderCalendar = wrapped;
+    }
+
+    if (typeof openDayDetail === "function" && !openDayDetail.__calendarPredictionClarityWrapped) {
+      const base = openDayDetail;
+      const wrapped = function(key, ...args) {
+        const result = base.call(this, key, ...args);
+        decorateDayDetailPrediction(key);
+        return result;
+      };
+      wrapped.__calendarPredictionClarityWrapped = true;
+      openDayDetail = wrapped;
+      window.openDayDetail = wrapped;
     }
 
     if (typeof showScreen === "function" && !showScreen.__cycleMilestoneWrapped) {
@@ -243,11 +427,13 @@
     if (window.TsukiCycleMilestoneHero?.installed) return;
     wrap();
     apply();
+    applyCalendarPredictionClarity();
     window.TsukiCycleMilestoneHero = {
       installed: true,
       version: VERSION,
       apply,
-      test: { milestoneForToday }
+      applyCalendarPredictionClarity,
+      test: { milestoneForToday, calendarProjectionState }
     };
   }
 
